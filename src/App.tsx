@@ -19,16 +19,36 @@ const PublicTracking = lazy(() => import('./pages/PublicTracking'));
 const Login = lazy(() => import('./pages/Login'));
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('public-search');
+  const [activeTab, setActiveTab] = useState(() => {
+    const path = window.location.pathname.replace(/^\//, '').toLowerCase();
+    const hash = window.location.hash.replace(/^#/, '').toLowerCase();
+    const route = path || hash;
+    if (route === 'login') return 'login';
+    if (route === 'dashboard') return 'dashboard';
+    if (route === 'shipments') return 'shipments';
+    if (route === 'tracking') return 'tracking';
+    if (route === 'add-shipment') return 'add-shipment';
+    if (route === 'settings') return 'settings';
+    return 'public-search';
+  });
   const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
     const handleLocation = () => {
-      if (window.location.hash === '#login' || window.location.pathname === '/login') {
-        setActiveTab('login');
-      }
+      const path = window.location.pathname.replace(/^\//, '').toLowerCase();
+      const hash = window.location.hash.replace(/^#/, '').toLowerCase();
+      const route = path || hash;
+      
+      if (route === 'login') setActiveTab('login');
+      else if (route === 'dashboard') setActiveTab('dashboard');
+      else if (route === 'shipments') setActiveTab('shipments');
+      else if (route === 'tracking') setActiveTab('tracking');
+      else if (route === 'add-shipment') setActiveTab('add-shipment');
+      else if (route === 'settings') setActiveTab('settings');
+      else if (route === 'public-search' || route === '') setActiveTab('public-search');
     };
-    handleLocation();
+
+    window.addEventListener('popstate', handleLocation);
     window.addEventListener('hashchange', handleLocation);
     
     // Handle redirect result
@@ -36,19 +56,30 @@ export default function App() {
       console.error("Redirect auth error:", error);
     });
 
-    return () => window.removeEventListener('hashchange', handleLocation);
+    return () => {
+      window.removeEventListener('popstate', handleLocation);
+      window.removeEventListener('hashchange', handleLocation);
+    };
   }, []);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    const targetPath = tab === 'public-search' ? '/' : `/${tab}`;
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, '', targetPath);
+    }
+  };
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
       // Automatically redirect away from admin tabs if logged out
       if (!u && ['dashboard', 'shipments', 'add-shipment', 'settings'].includes(activeTab)) {
-        setActiveTab('public-search');
+        handleTabChange('public-search');
       }
       
       if (u && activeTab === 'login') {
-        setActiveTab('dashboard');
+        handleTabChange('dashboard');
       }
     });
   }, [activeTab]);
@@ -61,14 +92,14 @@ export default function App() {
       case 'add-shipment': return <AdminAddShipment />;
       case 'public-search': return <PublicTracking />;
       case 'settings': return <Settings />;
-      case 'login': return <Login onLoginSuccess={() => setActiveTab('dashboard')} />;
+      case 'login': return <Login onLoginSuccess={() => handleTabChange('dashboard')} />;
       default: return <PublicTracking />;
     }
   };
 
   return (
     <div className="min-h-screen bg-[#09090b] selection:bg-orange-500/30 selection:text-orange-500">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Sidebar activeTab={activeTab} setActiveTab={handleTabChange} />
       
       <main className="lg:pl-64 min-h-screen flex flex-col">
         {activeTab !== 'login' && (
