@@ -331,11 +331,11 @@ export default function RegisteredUsers() {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <Sparkles size={16} className="text-orange-400" />
-            <span className="text-sm font-bold text-white">Direct Firebase Authentication Sync</span>
+            <span className="text-sm font-bold text-white">Default Policy: New Users Blocked Until Switched ON</span>
           </div>
           <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
-            All users below are synchronized with Firebase Authentication. When a switch is turned <span className="text-red-400 font-semibold">OFF</span>, 
-            the user logged in with that Gmail will immediately see <span className="text-white font-medium">only a black screen</span> with:
+            Whenever any new user signs in to the app, their switch is <span className="text-red-400 font-bold">OFF by default</span>. 
+            They will immediately see <span className="text-white font-medium">only the black screen</span> until you turn their switch <span className="text-emerald-400 font-bold">ON</span>:
             <br />
             <code className="text-orange-300 font-mono bg-zinc-950/80 px-2 py-0.5 rounded mt-1 inline-block">
               "API Token limit reached, recharge it to use more"

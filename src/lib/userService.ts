@@ -159,7 +159,7 @@ export async function discoverAndSyncPreviousUsers(): Promise<{ discovered: numb
           displayName: userDetails.displayName || email.split('@')[0],
           photoURL: userDetails.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
           role: email === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
-          isEnabled: true,
+          isEnabled: email === ADMIN_EMAIL.toLowerCase(), // Default switch OFF (black screen) for users
           createdAt: new Date().toISOString(),
           lastLoginAt: 'Previously Active',
           notes: userDetails.notes || 'Imported from Firebase history',
@@ -203,7 +203,7 @@ export async function batchImportUsers(rawEmails: string[]): Promise<{ imported:
           displayName: email.split('@')[0],
           photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
           role: email === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
-          isEnabled: true,
+          isEnabled: email === ADMIN_EMAIL.toLowerCase(), // Default to OFF (black screen) unless admin
           createdAt: new Date().toISOString(),
           lastLoginAt: 'Imported from Firebase Auth',
           notes: 'Synchronized from Firebase Authentication console',
@@ -245,10 +245,10 @@ export async function syncUserOnLogin(user: User): Promise<RegisteredUser> {
         displayName: user.displayName || email.split('@')[0],
         photoURL: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
         role: isAdmin ? 'admin' : 'user',
-        isEnabled: true, // Enabled by default until admin turns off switch
+        isEnabled: isAdmin ? true : false, // Default switch is OFF (black screen) for new sign-ins; only master admin is ON
         createdAt: user.metadata?.creationTime || new Date().toISOString(),
         lastLoginAt: user.metadata?.lastSignInTime || new Date().toISOString(),
-        notes: isAdmin ? 'Master Administrator (Firebase Auth)' : 'Authenticated Firebase User',
+        notes: isAdmin ? 'Master Administrator (Firebase Auth)' : 'New User (Default: Restricted / Black Screen)',
         authUid: user.uid,
         authProvider: providerId,
         isFirebaseAuth: true,
@@ -303,7 +303,8 @@ export async function toggleUserAccess(email: string, isEnabled: boolean): Promi
 export async function addRegisteredUser(
   email: string, 
   displayName?: string, 
-  notes?: string
+  notes?: string,
+  isEnabled: boolean = false
 ): Promise<RegisteredUser> {
   const cleanEmail = email.trim().toLowerCase();
   const docId = normalizeEmailDocId(cleanEmail);
@@ -315,10 +316,10 @@ export async function addRegisteredUser(
     displayName: displayName?.trim() || cleanEmail.split('@')[0],
     photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanEmail)}`,
     role: cleanEmail === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
-    isEnabled: true,
+    isEnabled: cleanEmail === ADMIN_EMAIL.toLowerCase() ? true : isEnabled,
     createdAt: new Date().toISOString(),
     lastLoginAt: 'Pre-Authorized',
-    notes: notes?.trim() || 'Authorized by Admin uzair9799@gmail.com',
+    notes: notes?.trim() || 'Pre-authorized by Admin uzair9799@gmail.com',
     isFirebaseAuth: true,
   };
 

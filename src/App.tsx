@@ -111,7 +111,12 @@ export default function App() {
       } else {
         const isAdmin = u.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
-        // Sync or register user in Firestore
+        // Non-admin users are blocked by default until their switch is explicitly ON in Firestore
+        if (!isAdmin) {
+          setIsTokenLimitReached(true);
+        }
+
+        // Sync or register user in Firestore (new users default to switch OFF)
         try {
           await syncUserOnLogin(u);
           if (isAdmin) {
@@ -130,9 +135,13 @@ export default function App() {
 
         // Subscribe to real-time status of this user's API switch
         unsubscribeStatus = subscribeToUserStatus(u.email || '', (userDoc) => {
-          // If non-admin user has switch turned OFF, trigger black screen
-          if (!isAdmin && userDoc && userDoc.isEnabled === false) {
-            setIsTokenLimitReached(true);
+          // If non-admin user has switch turned OFF (or pending/empty), trigger black screen
+          if (!isAdmin) {
+            if (!userDoc || userDoc.isEnabled === false) {
+              setIsTokenLimitReached(true);
+            } else {
+              setIsTokenLimitReached(false);
+            }
           } else {
             setIsTokenLimitReached(false);
           }
