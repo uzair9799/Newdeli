@@ -6,7 +6,7 @@
 import { useState, Suspense, lazy, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Bell, HelpCircle, ShieldCheck } from 'lucide-react';
+import { Search, Bell, HelpCircle, ShieldCheck, X } from 'lucide-react';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
 import { ADMIN_EMAIL } from './constants';
@@ -41,6 +41,7 @@ export default function App() {
   });
   const [user, setUser] = useState<any>(null);
   const [isTokenLimitReached, setIsTokenLimitReached] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState('');
 
   useEffect(() => {
     const handleLocation = () => {
@@ -164,7 +165,7 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
       case 'users-access': return <RegisteredUsers />;
-      case 'shipments': return <Shipments />;
+      case 'shipments': return <Shipments initialSearch={globalSearch} onSearchChange={setGlobalSearch} />;
       case 'tracking': return <Tracking />;
       case 'add-shipment': return <AdminAddShipment />;
       case 'public-search': return <PublicTracking />;
@@ -194,9 +195,26 @@ export default function App() {
                   <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-orange-500 transition-colors" />
                   <input 
                     type="text" 
-                    placeholder="Universal search..." 
-                    className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500/50 transition-all"
+                    value={globalSearch}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setGlobalSearch(val);
+                      if (activeTab !== 'shipments' && val.trim()) {
+                        handleTabChange('shipments');
+                      }
+                    }}
+                    placeholder="Search receiver name, tracking ID..." 
+                    className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-xl pl-10 pr-10 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500/50 transition-all text-white placeholder:text-zinc-500"
                   />
+                  {globalSearch && (
+                    <button
+                      onClick={() => setGlobalSearch('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                      title="Clear Search"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
              </div>
 

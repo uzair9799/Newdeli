@@ -1,12 +1,12 @@
-import { Search, Filter, MoreHorizontal, ArrowRight, ExternalLink, Loader2, Edit2, X, Save, History, Clock, User as UserIcon, Package } from 'lucide-react';
+import { Search, Filter, MoreHorizontal, ArrowRight, ExternalLink, Loader2, Edit2, X, Save, History, Clock, User as UserIcon, Package, Eye, Check, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useState, useEffect } from 'react';
-import { collection, query, orderBy, limit, getDocs, doc, updateDoc, serverTimestamp, arrayUnion, onSnapshot } from 'firebase/firestore';
+import { useState, useEffect, useMemo, ChangeEvent } from 'react';
+import { collection, query, orderBy, limit, doc, updateDoc, serverTimestamp, arrayUnion, onSnapshot } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import { cn } from '../lib/utils';
 import { Shipment, ShipmentStatus } from '../types';
-import { onAuthStateChanged } from 'firebase/auth';
 import { OWNER_EMAIL } from '../constants';
+import ShipmentDetailsModal from '../components/ShipmentDetailsModal';
 
 const STATUS_OPTIONS: ShipmentStatus[] = ['Pending', 'In Transit', 'Out for Delivery', 'Delivered', 'Delayed', 'Cancelled', 'In Warehouse'];
 
@@ -298,15 +298,46 @@ function EditShipmentModal({ shipment, onClose, onSave }: EditModalProps) {
   );
 }
 
-export default function Shipments() {
+interface ShipmentsProps {
+  initialSearch?: string;
+  onSearchChange?: (query: string) => void;
+}
+
+export default function Shipments({ initialSearch = '', onSearchChange }: ShipmentsProps) {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [statusFilter, setStatusFilter] = useState<string>('All');
+  const [showFilters, setShowFilters] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
   const [viewingAudit, setViewingAudit] = useState<Shipment | null>(null);
+  const [viewingDetails, setViewingDetails] = useState<Shipment | null>(null);
+
+  // Sync with prop if initialSearch changes
+  useEffect(() => {
+    if (initialSearch !== undefined && initialSearch !== searchQuery) {
+      setSearchQuery(initialSearch);
+    }
+  }, [initialSearch]);
+
+  const handleSearchInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setSearchQuery(val);
+    if (onSearchChange) {
+      onSearchChange(val);
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    if (onSearchChange) {
+      onSearchChange('');
+    }
+  };
 
   useEffect(() => {
     setLoading(true);
-    const q = query(collection(db, 'shipments'), orderBy('createdAt', 'desc'), limit(50));
+    const q = query(collection(db, 'shipments'), orderBy('createdAt', 'desc'), limit(100));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Shipment));
@@ -320,17 +351,57 @@ export default function Shipments() {
 
     return () => unsubscribe();
   }, []);
+
   const getStatusColor = (status: ShipmentStatus) => {
     switch (status) {
-      case 'In Transit': return 'text-blue-500 bg-blue-500/10 border-blue-500/20';
-      case 'Delivered': return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
-      case 'Delayed': return 'text-rose-500 bg-rose-500/10 border-rose-500/20';
-      case 'Pending': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
-      case 'Out for Delivery': return 'text-orange-500 bg-orange-500/10 border-orange-500/20';
-      case 'In Warehouse': return 'text-amber-500 bg-amber-500/10 border-amber-500/20';
-      default: return 'text-zinc-500 bg-zinc-500/10 border-zinc-500/20';
+      case 'In Transit': return 'text-blue-400 bg-blue-500/10 border-blue-500/20';
+      case 'Delivered': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+      case 'Delayed': return 'text-rose-400 bg-rose-500/10 border-rose-500/20';
+      case 'Pending': return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+      case 'Out for Delivery': return 'text-orange-400 bg-orange-500/10 border-orange-500/20';
+      case 'In Warehouse': return 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20';
+      default: return 'text-zinc-400 bg-zinc-500/10 border-zinc-500/20';
     }
   };
+
+  // Filter shipments by Tracking Number, Recipient Name (Receiver), Sender, Origin, Destination, etc.
+  const filteredShipments = useMemo(() => {
+    return shipments.filter((s) => {
+      // 1. Status Filter
+      if (statusFilter !== 'All' && s.status !== statusFilter) {
+        return false;
+      }
+
+      // 2. Search Query Filter
+      if (!searchQuery.trim()) return true;
+
+      const q = searchQuery.trim().toLowerCase();
+      const cleanQ = q.replace(/[^a-z0-9]/gi, '');
+
+      const tracking = (s.trackingNumber || '').toLowerCase();
+      const cleanTracking = tracking.replace(/[^a-z0-9]/gi, '');
+
+      const recipient = (s.recipientName || '').toLowerCase();
+      const sender = (s.senderName || '').toLowerCase();
+      const origin = (s.origin || '').toLowerCase();
+      const destination = (s.destination || '').toLowerCase();
+      const location = (s.lastUpdatedLocation || '').toLowerCase();
+      const status = (s.status || '').toLowerCase();
+      const remarks = (s.remarks || '').toLowerCase();
+
+      return (
+        tracking.includes(q) ||
+        (cleanQ.length >= 2 && cleanTracking.includes(cleanQ)) ||
+        recipient.includes(q) ||
+        sender.includes(q) ||
+        destination.includes(q) ||
+        origin.includes(q) ||
+        status.includes(q) ||
+        location.includes(q) ||
+        remarks.includes(q)
+      );
+    });
+  }, [shipments, searchQuery, statusFilter]);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -344,22 +415,99 @@ export default function Shipments() {
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
             <input 
               type="text" 
-              placeholder="Search tracking ID, sender..."
-              className="bg-zinc-900 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 w-[240px] md:w-[320px]"
+              value={searchQuery}
+              onChange={handleSearchInputChange}
+              placeholder="Search receiver name, tracking ID..."
+              className="bg-zinc-900 border border-zinc-800 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-orange-500/50 w-[260px] md:w-[340px] transition-all"
             />
+            {searchQuery && (
+              <button 
+                onClick={handleClearSearch}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                title="Clear Search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
-          <button className="p-2 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-colors">
-            <Filter size={20} className="text-zinc-400" />
+          <button 
+            onClick={() => setShowFilters(prev => !prev)}
+            className={cn(
+              "p-2.5 border rounded-xl transition-colors flex items-center gap-1.5 text-sm font-semibold",
+              showFilters || statusFilter !== 'All' 
+                ? "bg-orange-500/10 border-orange-500/40 text-orange-400" 
+                : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            )}
+            title="Filter shipments"
+          >
+            <Filter size={18} />
+            {statusFilter !== 'All' && (
+              <span className="w-2 h-2 rounded-full bg-orange-500" />
+            )}
           </button>
         </div>
       </header>
+
+      {/* Filter Row */}
+      {showFilters && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 bg-zinc-900/60 border border-zinc-800 rounded-2xl flex flex-wrap items-center gap-2"
+        >
+          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider mr-2">Status:</span>
+          {['All', ...STATUS_OPTIONS].map((status) => (
+            <button
+              key={status}
+              onClick={() => setStatusFilter(status)}
+              className={cn(
+                "px-3 py-1.5 rounded-xl text-xs font-bold transition-all",
+                statusFilter === status
+                  ? "bg-orange-500 text-orange-950 shadow-lg shadow-orange-500/20"
+                  : "bg-zinc-800/80 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700/50"
+              )}
+            >
+              {status}
+            </button>
+          ))}
+          {statusFilter !== 'All' && (
+            <button
+              onClick={() => setStatusFilter('All')}
+              className="ml-auto text-xs text-orange-400 hover:underline font-semibold"
+            >
+              Reset Filter
+            </button>
+          )}
+        </motion.div>
+      )}
+
+      {/* Active Search / Match Banner */}
+      {searchQuery.trim() && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-orange-500/10 border border-orange-500/20 rounded-xl text-xs">
+          <div className="flex items-center gap-2 text-orange-300">
+            <Search size={14} className="text-orange-400" />
+            <span>
+              Searching for: <strong className="text-white font-mono bg-zinc-900/80 px-2 py-0.5 rounded border border-orange-500/30">{searchQuery}</strong>
+            </span>
+            <span className="text-zinc-400 ml-2">
+              (Found <strong className="text-white font-bold">{filteredShipments.length}</strong> {filteredShipments.length === 1 ? 'match' : 'matches'})
+            </span>
+          </div>
+          <button
+            onClick={handleClearSearch}
+            className="text-orange-400 hover:text-white font-bold hover:underline flex items-center gap-1"
+          >
+            <X size={12} /> Clear Filter
+          </button>
+        </div>
+      )}
 
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl overflow-hidden backdrop-blur-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-zinc-800">
-                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-zinc-500">Tracking Info</th>
+                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-zinc-500">Tracking & Receiver</th>
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-zinc-500">Origin / Destination</th>
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-zinc-500">Status</th>
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-zinc-500">Est. Delivery</th>
@@ -372,57 +520,106 @@ export default function Shipments() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-20 text-center">
+                  <td colSpan={6} className="py-20 text-center">
                     <Loader2 className="animate-spin mx-auto text-orange-500" size={32} />
                     <p className="text-zinc-500 mt-4 font-medium">Loading shipments...</p>
                   </td>
                 </tr>
-              ) : shipments.length === 0 ? (
+              ) : filteredShipments.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-20 text-center text-zinc-500">
-                    No shipments found. Start by creating one from the sidebar.
+                  <td colSpan={6} className="py-16 text-center">
+                    <div className="max-w-md mx-auto space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center mx-auto text-zinc-500">
+                        <Package size={24} />
+                      </div>
+                      <p className="text-white font-bold text-base">No shipments match your criteria</p>
+                      <p className="text-zinc-400 text-xs leading-relaxed">
+                        {searchQuery 
+                          ? `No records found matching "${searchQuery}". Please check the receiver name or tracking ID.`
+                          : 'No shipments available in this filter.'}
+                      </p>
+                      {(searchQuery || statusFilter !== 'All') && (
+                        <button
+                          onClick={() => {
+                            handleClearSearch();
+                            setStatusFilter('All');
+                          }}
+                          className="px-4 py-2 bg-orange-500 hover:bg-orange-400 text-orange-950 rounded-xl text-xs font-bold transition-all"
+                        >
+                          Clear All Filters
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
-              ) : shipments.map((shipment, idx) => (
+              ) : filteredShipments.map((shipment, idx) => (
                 <motion.tr
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.05 }}
+                  transition={{ delay: Math.min(idx * 0.03, 0.3) }}
                   key={shipment.id}
-                  className="group hover:bg-zinc-800/30 transition-all border-b border-zinc-800/50 last:border-0"
+                  onClick={() => setViewingDetails(shipment)}
+                  className="group hover:bg-zinc-800/40 transition-all border-b border-zinc-800/50 last:border-0 cursor-pointer"
                 >
+                  {/* Tracking & Receiver Column */}
                   <td className="px-6 py-5">
                     <div className="flex flex-col">
-                      <span className="text-sm font-bold text-white group-hover:text-orange-500 transition-colors">{shipment.trackingNumber}</span>
-                      <span className="text-xs text-zinc-500 font-mono mt-0.5">{shipment.senderName}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white group-hover:text-orange-400 transition-colors font-mono">
+                          {shipment.trackingNumber}
+                        </span>
+                      </div>
+                      
+                      {/* Prominent Receiver Name */}
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-xs font-semibold text-orange-300 group-hover:text-orange-200 transition-colors">
+                          {shipment.recipientName || shipment.senderName || 'Receiver Not Specified'}
+                        </span>
+                      </div>
+
+                      {/* Shipper/Sender Name */}
+                      {shipment.senderName && shipment.senderName !== shipment.recipientName && (
+                        <span className="text-[11px] text-zinc-500 mt-0.5">
+                          From: {shipment.senderName}
+                        </span>
+                      )}
                     </div>
                   </td>
+
+                  {/* Origin / Destination */}
                   <td className="px-6 py-5">
                     <div className="flex items-center gap-3">
                       <div className="flex flex-col">
                         <span className="text-sm font-medium text-white">{shipment.origin?.split(',')[0]}</span>
                         <span className="text-[10px] text-zinc-500 uppercase">{shipment.origin?.split(',')[1]}</span>
                       </div>
-                      <ArrowRight size={14} className="text-zinc-700" />
+                      <ArrowRight size={14} className="text-zinc-700 group-hover:text-orange-500 transition-colors" />
                       <div className="flex flex-col">
                         <span className="text-sm font-medium text-white">{shipment.destination?.split(',')[0]}</span>
                         <span className="text-[10px] text-zinc-500 uppercase">{shipment.destination?.split(',')[1]}</span>
                       </div>
                     </div>
                   </td>
+
+                  {/* Status */}
                   <td className="px-6 py-5">
                     <span className={cn(
-                      "px-3 py-1 rounded-full text-xs font-bold border",
+                      "px-3 py-1 rounded-full text-xs font-bold border inline-flex items-center gap-1.5",
                       getStatusColor(shipment.status)
                     )}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
                       {shipment.status}
                     </span>
                   </td>
+
+                  {/* Est Delivery */}
                   <td className="px-6 py-5">
-                    <span className="text-sm text-zinc-400">{shipment.estimatedDeliveryDate}</span>
+                    <span className="text-sm text-zinc-400">{shipment.estimatedDeliveryDate || 'N/A'}</span>
                   </td>
+
+                  {/* Audit Trail (Admin only) */}
                   {auth.currentUser?.email === OWNER_EMAIL && (
-                    <td className="px-6 py-5">
+                    <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-col gap-1.5 min-w-[140px]">
                         <div className="flex items-center gap-2 text-[10px]">
                           <div className="w-1.5 h-1.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"></div>
@@ -450,16 +647,31 @@ export default function Shipments() {
                       </div>
                     </td>
                   )}
-                  <td className="px-6 py-5 text-right">
+
+                  {/* Actions Column */}
+                  <td className="px-6 py-5 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       <button 
+                        onClick={() => setViewingDetails(shipment)}
+                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-orange-400 transition-colors border border-transparent hover:border-zinc-700"
+                        title="View Full Shipment Details"
+                      >
+                        <Eye size={16} />
+                      </button>
+
+                      <button 
                         onClick={() => setEditingShipment(shipment)}
-                        className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-orange-500 transition-colors"
+                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-orange-400 transition-colors border border-transparent hover:border-zinc-700"
                         title="Edit Shipment"
                       >
                         <Edit2 size={16} />
                       </button>
-                       <button className="p-2 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition-colors">
+
+                      <button 
+                        onClick={() => setViewingDetails(shipment)}
+                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors border border-transparent hover:border-zinc-700"
+                        title="Open Details & Tracking"
+                      >
                         <ExternalLink size={16} />
                       </button>
                     </div>
@@ -471,32 +683,44 @@ export default function Shipments() {
         </div>
         
         <div className="px-6 py-4 border-t border-zinc-800 flex items-center justify-between bg-zinc-900/80">
-          <p className="text-xs text-zinc-500 font-medium">Showing <span className="text-white">{shipments.length}</span> of <span className="text-white">...</span> active shipments</p>
+          <p className="text-xs text-zinc-500 font-medium">
+            Showing <span className="text-white font-bold">{filteredShipments.length}</span> of <span className="text-white font-bold">{shipments.length}</span> shipments
+            {searchQuery && <span className="text-orange-400 ml-1">(filtered)</span>}
+          </p>
           <div className="flex items-center gap-2">
-            <button className="px-3 py-1 text-xs font-bold text-zinc-400 hover:text-white transition-colors disabled:opacity-30" disabled>Previous</button>
-            <div className="flex items-center gap-1">
-              <button className="w-8 h-8 rounded-lg bg-orange-500 text-orange-950 font-bold text-xs">1</button>
-              <button className="w-8 h-8 rounded-lg hover:bg-zinc-800 text-zinc-400 font-bold text-xs transition-colors">2</button>
-              <button className="w-8 h-8 rounded-lg hover:bg-zinc-800 text-zinc-400 font-bold text-xs transition-colors">3</button>
-            </div>
-            <button className="px-3 py-1 text-xs font-bold text-zinc-400 hover:text-white transition-colors">Next</button>
+            <span className="text-xs text-zinc-500 mr-2">Click any shipment row for instant details</span>
           </div>
         </div>
       </div>
 
       <AnimatePresence>
+        {/* Full Details Modal */}
+        {viewingDetails && (
+          <ShipmentDetailsModal
+            shipment={viewingDetails}
+            onClose={() => setViewingDetails(null)}
+            onEdit={(s) => setEditingShipment(s)}
+          />
+        )}
+
+        {/* Audit Trail Modal */}
         {viewingAudit && (
           <AuditTrailModal 
             shipment={viewingAudit}
             onClose={() => setViewingAudit(null)}
           />
         )}
+
+        {/* Edit Shipment Modal */}
         {editingShipment && (
           <EditShipmentModal 
             shipment={editingShipment}
             onClose={() => setEditingShipment(null)}
             onSave={(updated) => {
               setShipments(prev => prev.map(s => s.id === updated.id ? updated : s));
+              if (viewingDetails?.id === updated.id) {
+                setViewingDetails(updated);
+              }
             }}
           />
         )}
