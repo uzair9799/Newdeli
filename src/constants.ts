@@ -1,4 +1,5 @@
 export const OWNER_EMAIL = 'uzair9799@gmail.com';
+export const ADMIN_EMAIL = 'uzair9799@gmail.com';
 
 export const TRACKING_STEPS = [
   { status: 'Out for Delivery', location: 'London DC, UK', date: 'May 23, 2024 - 08:30 AM' },

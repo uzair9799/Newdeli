@@ -6,9 +6,13 @@
 import { useState, Suspense, lazy, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Bell, HelpCircle } from 'lucide-react';
+import { Search, Bell, HelpCircle, ShieldCheck } from 'lucide-react';
 import { auth } from './lib/firebase';
 import { onAuthStateChanged, getRedirectResult } from 'firebase/auth';
+import { ADMIN_EMAIL } from './constants';
+import { syncUserOnLogin, subscribeToUserStatus, ensureInitialRegisteredUsers } from './lib/userService';
+import TokenLimitBlockedScreen from './components/TokenLimitBlockedScreen';
+import { cn } from './lib/utils';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Shipments = lazy(() => import('./pages/Shipments'));
@@ -17,6 +21,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const AdminAddShipment = lazy(() => import('./pages/AdminAddShipment'));
 const PublicTracking = lazy(() => import('./pages/PublicTracking'));
 const Login = lazy(() => import('./pages/Login'));
+const RegisteredUsers = lazy(() => import('./pages/RegisteredUsers'));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(() => {
@@ -25,6 +30,7 @@ export default function App() {
     const route = path || hash;
     if (route === 'login') return 'login';
     if (route === 'dashboard') return 'dashboard';
+    if (route === 'users-access' || route === 'users') return 'users-access';
     if (route === 'shipments') return 'shipments';
     if (route === 'tracking') return 'tracking';
     if (route === 'add-shipment') return 'add-shipment';
@@ -32,6 +38,7 @@ export default function App() {
     return 'public-search';
   });
   const [user, setUser] = useState<any>(null);
+  const [isTokenLimitReached, setIsTokenLimitReached] = useState(false);
 
   useEffect(() => {
     const handleLocation = () => {
@@ -41,6 +48,7 @@ export default function App() {
       
       if (route === 'login') setActiveTab('login');
       else if (route === 'dashboard') setActiveTab('dashboard');
+      else if (route === 'users-access' || route === 'users') setActiveTab('users-access');
       else if (route === 'shipments') setActiveTab('shipments');
       else if (route === 'tracking') setActiveTab('tracking');
       else if (route === 'add-shipment') setActiveTab('add-shipment');
@@ -71,31 +79,86 @@ export default function App() {
   };
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => {
+    let unsubscribeStatus: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      // Automatically redirect away from admin tabs if logged out
-      if (!u && ['dashboard', 'shipments', 'add-shipment', 'settings'].includes(activeTab)) {
-        handleTabChange('public-search');
+
+      if (unsubscribeStatus) {
+        unsubscribeStatus();
+        unsubscribeStatus = null;
       }
-      
-      if (u && activeTab === 'login') {
-        handleTabChange('dashboard');
+
+      if (!u) {
+        setIsTokenLimitReached(false);
+        // Automatically redirect away from admin tabs if logged out
+        if (['dashboard', 'shipments', 'add-shipment', 'settings', 'users-access'].includes(activeTab)) {
+          handleTabChange('public-search');
+        }
+      } else {
+        const isAdmin = u.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+        // Sync or register user in Firestore
+        try {
+          await syncUserOnLogin(u);
+          if (isAdmin) {
+            await ensureInitialRegisteredUsers(u);
+          }
+        } catch (err) {
+          console.error('Failed to sync user registration:', err);
+        }
+
+        // If admin logs in, navigate directly to User Access & Tokens view to see registered emails
+        if (isAdmin && (activeTab === 'login' || activeTab === 'public-search')) {
+          handleTabChange('users-access');
+        } else if (activeTab === 'login') {
+          handleTabChange('dashboard');
+        }
+
+        // Subscribe to real-time status of this user's API switch
+        unsubscribeStatus = subscribeToUserStatus(u.email || '', (userDoc) => {
+          // If non-admin user has switch turned OFF, trigger black screen
+          if (!isAdmin && userDoc && userDoc.isEnabled === false) {
+            setIsTokenLimitReached(true);
+          } else {
+            setIsTokenLimitReached(false);
+          }
+        });
       }
     });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeStatus) unsubscribeStatus();
+    };
   }, [activeTab]);
+
+  // When API Token switch is turned off for this user, show ONLY a black screen with the required text
+  if (user && isTokenLimitReached) {
+    return <TokenLimitBlockedScreen userEmail={user.email} />;
+  }
 
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
+      case 'users-access': return <RegisteredUsers />;
       case 'shipments': return <Shipments />;
       case 'tracking': return <Tracking />;
       case 'add-shipment': return <AdminAddShipment />;
       case 'public-search': return <PublicTracking />;
-      case 'settings': return <Settings />;
-      case 'login': return <Login onLoginSuccess={() => handleTabChange('dashboard')} />;
+      case 'settings': return <Settings onNavigateTab={handleTabChange} />;
+      case 'login': return <Login onLoginSuccess={() => {
+        if (auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+          handleTabChange('users-access');
+        } else {
+          handleTabChange('dashboard');
+        }
+      }} />;
       default: return <PublicTracking />;
     }
   };
+
+  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
   return (
     <div className="min-h-screen bg-[#09090b] selection:bg-orange-500/30 selection:text-orange-500">
@@ -136,8 +199,13 @@ export default function App() {
                 {user && (
                   <div className="flex items-center gap-3 pl-2">
                     <div className="flex flex-col items-end hidden sm:flex text-right">
-                      <span className="text-xs font-bold text-white line-clamp-1">{user.displayName || 'Authenticated'}</span>
-                      <span className="text-[10px] font-medium text-zinc-500">Admin Account</span>
+                      <span className="text-xs font-bold text-white line-clamp-1">{user.displayName || user.email}</span>
+                      <span className={cn(
+                        "text-[10px] font-bold",
+                        isAdmin ? "text-orange-400" : "text-zinc-500"
+                      )}>
+                        {isAdmin ? 'Master Admin' : 'Registered User'}
+                      </span>
                     </div>
                     <div className="w-8 h-8 rounded-full bg-orange-500/20 border border-orange-500/30 flex items-center justify-center overflow-hidden">
                        <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} alt="User" />

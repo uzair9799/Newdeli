@@ -1,11 +1,14 @@
-import { ArrowUpRight, ArrowDownRight, Package, Truck, Clock, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Package, Truck, Clock, AlertTriangle, Loader2, ShieldCheck, Users, ExternalLink } from 'lucide-react';
 import { motion } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useState, useEffect } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, auth } from '../lib/firebase';
 import { cn } from '../lib/utils';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { ADMIN_EMAIL } from '../constants';
+import { subscribeToRegisteredUsers, toggleUserAccess } from '../lib/userService';
+import { RegisteredUser } from '../types';
 
 const data = [
   { name: 'Mon', volume: 4000 },
@@ -20,11 +23,22 @@ const data = [
 export default function Dashboard() {
   const [counts, setCounts] = useState({ total: 0, pending: 0, inTransit: 0, delivered: 0 });
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
+  const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    let unsubscribeUsers: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
       if (user) {
         fetchStats();
+        if (user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+          unsubscribeUsers = subscribeToRegisteredUsers((users) => {
+            setRegisteredUsers(users);
+          });
+        }
       } else {
         setLoading(false);
       }
@@ -47,8 +61,24 @@ export default function Dashboard() {
       }
     }
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeUsers) unsubscribeUsers();
+    };
   }, []);
+
+  const handleToggle = async (user: RegisteredUser) => {
+    setTogglingEmail(user.email);
+    try {
+      await toggleUserAccess(user.email, !user.isEnabled);
+    } catch (err) {
+      console.error('Failed to toggle user:', err);
+    } finally {
+      setTogglingEmail(null);
+    }
+  };
+
+  const isAdmin = currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
   if (loading) {
     return (
@@ -168,6 +198,103 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+      {/* Admin Registered Users Quick Control Section */}
+      {isAdmin && (
+        <div className="p-6 bg-zinc-900/50 border border-orange-500/30 rounded-3xl space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/80 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400">
+                <Users size={20} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-white">Registered Users & Access Switches</h3>
+                  <span className="px-2 py-0.5 rounded-md bg-orange-500/20 text-orange-400 text-[10px] font-black uppercase">
+                    Admin Exclusive
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Turning the switch OFF blocks that Gmail and renders the black "API Token limit reached" screen.
+                </p>
+              </div>
+            </div>
+
+            <a
+              href="/users-access"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-zinc-200 transition-colors shrink-0"
+            >
+              <span>Manage All Users</span>
+              <ExternalLink size={14} />
+            </a>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {registeredUsers.map((user) => {
+              const isMasterAdmin = user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+              const isToggling = togglingEmail === user.email;
+
+              return (
+                <div
+                  key={user.email}
+                  className={cn(
+                    "p-4 rounded-2xl border transition-all flex items-center justify-between gap-3",
+                    user.isEnabled
+                      ? "bg-zinc-950/60 border-zinc-800"
+                      : "bg-red-950/10 border-red-900/30"
+                  )}
+                >
+                  <div className="min-w-0 flex items-center gap-3">
+                    <img
+                      src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`}
+                      alt={user.email}
+                      className="w-9 h-9 rounded-full bg-zinc-800 border border-zinc-700 shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{user.email}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={cn(
+                          "w-1.5 h-1.5 rounded-full",
+                          user.isEnabled ? "bg-emerald-400 animate-pulse" : "bg-red-500"
+                        )} />
+                        <span className="text-[10px] text-zinc-400 font-mono">
+                          {user.isEnabled ? "Access Allowed" : "Token Blocked"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Switch button */}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={user.isEnabled}
+                    disabled={isMasterAdmin || isToggling}
+                    onClick={() => handleToggle(user)}
+                    title={isMasterAdmin ? "Primary admin cannot be toggled" : `Turn ${user.isEnabled ? 'OFF' : 'ON'}`}
+                    className={cn(
+                      "relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 transition-colors duration-200 ease-in-out focus:outline-none",
+                      user.isEnabled
+                        ? "bg-emerald-600 border-emerald-500"
+                        : "bg-zinc-800 border-zinc-700",
+                      isMasterAdmin && "opacity-60 cursor-not-allowed",
+                      isToggling && "opacity-50 cursor-wait"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out flex items-center justify-center text-[9px] font-black",
+                        user.isEnabled ? "translate-x-7 text-emerald-800" : "translate-x-0.5 text-zinc-800"
+                      )}
+                    >
+                      {user.isEnabled ? "ON" : "OFF"}
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

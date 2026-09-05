@@ -22,9 +22,30 @@
         "updatedByEmail": { "type": "string", "description": "Email of the user who last updated this shipment" }
       },
       "required": ["trackingNumber", "status"]
+    },
+    "RegisteredUser": {
+      "title": "RegisteredUser",
+      "description": "Registered app users and their API authorization status",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "Email of the registered user" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "photoURL": { "type": "string", "description": "User avatar URL" },
+        "role": { "type": "string", "description": "Role (admin or user)" },
+        "isEnabled": { "type": "boolean", "description": "Access switch: true = ON (authorized), false = OFF (API Token limit reached)" },
+        "createdAt": { "type": "string", "description": "Account registration timestamp" },
+        "lastLoginAt": { "type": "string", "description": "Last login timestamp" },
+        "updatedAt": { "type": "string", "description": "Last modified timestamp" },
+        "notes": { "type": "string", "description": "Optional notes on the user" }
+      },
+      "required": ["email", "isEnabled"]
     }
   },
   "firestore": {
+    "/registered_users": {
+      "schema": "RegisteredUser",
+      "description": "Collection of registered users and access permissions"
+    },
     "/shipments": {
       "schema": "Shipment",
       "description": "Collection of all shipments"

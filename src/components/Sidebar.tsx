@@ -1,9 +1,10 @@
-import { LayoutDashboard, Package, Truck, Settings, Bell, Search, Menu, X, ArrowUpRight, LogIn, LogOut } from 'lucide-react';
+import { LayoutDashboard, Package, Truck, Settings, Bell, Search, Menu, X, ArrowUpRight, LogIn, LogOut, Users, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
 import { auth } from '../lib/firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
+import { ADMIN_EMAIL } from '../constants';
 
 interface SidebarProps {
   activeTab: string;
@@ -32,9 +33,18 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     setActiveTab('public-search');
   };
 
+  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
   const menuItems = [
     { id: 'public-search', label: 'Public Tracking', icon: Search, public: true },
     { id: 'dashboard', label: 'Admin Dashboard', icon: LayoutDashboard, public: false },
+    ...(isAdmin ? [{ 
+      id: 'users-access', 
+      label: 'User Access & Tokens', 
+      icon: Users, 
+      public: false,
+      badge: 'ADMIN'
+    }] : []),
     { id: 'shipments', label: 'All Shipments', icon: Package, public: false },
     { id: 'add-shipment', label: 'Create Shipment', icon: Truck, public: false },
     { id: 'settings', label: 'Settings', icon: Settings, public: false },
@@ -83,7 +93,15 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                   )}
                 >
                   <item.icon size={20} className="relative z-10" />
-                  <span className="relative z-10">{item.label}</span>
+                  <span className="relative z-10 flex-1 text-left truncate">{item.label}</span>
+                  {(item as any).badge && (
+                    <span className={cn(
+                      "relative z-10 text-[9px] font-black uppercase px-1.5 py-0.5 rounded",
+                      activeTab === item.id ? "bg-orange-950 text-orange-400" : "bg-orange-500/20 text-orange-400"
+                    )}>
+                      {(item as any).badge}
+                    </span>
+                  )}
                   {activeTab === item.id && (
                     <motion.div 
                       layoutId="sidebar-active"

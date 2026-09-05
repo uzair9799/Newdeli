@@ -15,6 +15,32 @@ service cloud.firestore {
       return request.auth.token.email_verified == true;
     }
 
+    function isAppAdmin() {
+      return isSignedIn() && request.auth.token.email == 'uzair9799@gmail.com';
+    }
+
+    // Registered Users Collection
+    match /registered_users/{userDoc} {
+      allow get: if isSignedIn() && (
+        isAppAdmin() || 
+        request.auth.token.email == resource.data.email || 
+        request.auth.token.email == userDoc
+      );
+      allow list: if isAppAdmin();
+      
+      allow create: if isSignedIn() && (
+        isAppAdmin() || 
+        (request.auth.token.email == request.resource.data.email)
+      );
+      allow update: if isSignedIn() && (
+        isAppAdmin() || 
+        (request.auth.token.email == resource.data.email &&
+         request.resource.data.isEnabled == resource.data.isEnabled &&
+         request.resource.data.role == resource.data.role)
+      );
+      allow delete: if isAppAdmin();
+    }
+
     // Shipments Collection
     match /shipments/{shipmentId} {
       // Anyone can look up a specific shipment if they have the ID (Tracking)

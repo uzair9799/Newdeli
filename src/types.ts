@@ -32,3 +32,17 @@ export interface TrackingEvent {
   remarks: string;
   timestamp: string;
 }
+
+export interface RegisteredUser {
+  id: string;
+  email: string;
+  displayName?: string;
+  photoURL?: string;
+  role: 'admin' | 'user';
+  isEnabled: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+  updatedAt?: string;
+  notes?: string;
+}
+
