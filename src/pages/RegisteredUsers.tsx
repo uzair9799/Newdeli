@@ -13,8 +13,8 @@ import {
   Mail,
   Clock,
   Sparkles,
-  ToggleLeft,
-  ToggleRight
+  KeyRound,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RegisteredUser } from '../types';
@@ -23,7 +23,8 @@ import {
   toggleUserAccess, 
   addRegisteredUser, 
   removeRegisteredUser, 
-  ensureInitialRegisteredUsers 
+  ensureInitialRegisteredUsers,
+  purgeDemoUsers
 } from '../lib/userService';
 import { ADMIN_EMAIL } from '../constants';
 import { cn } from '../lib/utils';
@@ -36,6 +37,8 @@ export default function RegisteredUsers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
+  const [purging, setPurging] = useState(false);
+  const [purgeMessage, setPurgeMessage] = useState<string | null>(null);
   
   // Modal states
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -49,9 +52,10 @@ export default function RegisteredUsers() {
   const [isPreviewingLimitScreen, setIsPreviewingLimitScreen] = useState(false);
 
   useEffect(() => {
-    // Ensure admin and initial sample users exist
+    // 1. Purge any demo emails and ensure admin account exists
     ensureInitialRegisteredUsers(auth.currentUser);
 
+    // 2. Real-time subscription to authenticated users
     const unsubscribe = subscribeToRegisteredUsers(
       (data) => {
         setUsers(data);
@@ -65,6 +69,23 @@ export default function RegisteredUsers() {
 
     return () => unsubscribe();
   }, []);
+
+  const handlePurge = async () => {
+    setPurging(true);
+    setPurgeMessage(null);
+    try {
+      const removed = await purgeDemoUsers();
+      setPurgeMessage(removed > 0 
+        ? `Cleaned up ${removed} demo email(s). Now only showing Firebase Authentication users.`
+        : 'All demo emails already cleaned up. List contains only real Firebase Auth accounts.'
+      );
+      setTimeout(() => setPurgeMessage(null), 5000);
+    } catch (err) {
+      console.error('Failed to purge demo users:', err);
+    } finally {
+      setPurging(false);
+    }
+  };
 
   const handleToggle = async (user: RegisteredUser) => {
     setTogglingEmail(user.email);
@@ -106,7 +127,7 @@ export default function RegisteredUsers() {
       alert('Master admin account cannot be deleted.');
       return;
     }
-    if (confirm(`Are you sure you want to remove ${email} from registered users?`)) {
+    if (confirm(`Are you sure you want to remove ${email} from authorized users?`)) {
       try {
         await removeRegisteredUser(email);
       } catch (err) {
@@ -156,11 +177,16 @@ export default function RegisteredUsers() {
               <ShieldCheck className="text-orange-500" size={24} />
             </div>
             <div>
-              <h2 className="text-3xl font-bold text-white tracking-tight">
-                Registered Users & Access Control
-              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-3xl font-bold text-white tracking-tight">
+                  Firebase Users & Access Control
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
+                  Firebase Auth Connected
+                </span>
+              </div>
               <p className="text-zinc-400 text-sm mt-0.5">
-                Admin Portal for <span className="text-orange-400 font-mono font-medium">{ADMIN_EMAIL}</span>
+                Administered by <span className="text-orange-400 font-mono font-medium">{ADMIN_EMAIL}</span>
               </p>
             </div>
           </div>
@@ -168,10 +194,20 @@ export default function RegisteredUsers() {
 
         <div className="flex items-center gap-3 flex-wrap">
           <button 
-            onClick={() => setIsPreviewingLimitScreen(true)}
-            className="px-4 py-2.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-2"
+            onClick={handlePurge}
+            disabled={purging}
+            title="Clean any legacy demo accounts from the database"
+            className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-2"
           >
-            <Eye size={16} className="text-orange-400" />
+            <RefreshCw size={14} className={cn("text-zinc-400", purging && "animate-spin text-orange-400")} />
+            <span>{purging ? "Purging..." : "Purge Demo Accounts"}</span>
+          </button>
+
+          <button 
+            onClick={() => setIsPreviewingLimitScreen(true)}
+            className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-2"
+          >
+            <Eye size={14} className="text-orange-400" />
             <span>Preview Limit Screen</span>
           </button>
 
@@ -180,22 +216,36 @@ export default function RegisteredUsers() {
             className="px-4 py-2.5 bg-orange-500 hover:bg-orange-400 text-orange-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg shadow-orange-500/20"
           >
             <Plus size={16} />
-            <span>Register New Email</span>
+            <span>Pre-Authorize Gmail</span>
           </button>
         </div>
       </header>
+
+      {purgeMessage && (
+        <motion.div 
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium flex items-center gap-2"
+        >
+          <Check size={16} />
+          <span>{purgeMessage}</span>
+        </motion.div>
+      )}
 
       {/* Notice Card */}
       <div className="p-5 rounded-2xl bg-gradient-to-r from-orange-500/10 via-zinc-900/50 to-zinc-900/30 border border-orange-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <Sparkles size={16} className="text-orange-400" />
-            <span className="text-sm font-bold text-white">Interactive API Token Switch</span>
+            <span className="text-sm font-bold text-white">Direct Firebase Authentication Sync</span>
           </div>
           <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
-            When a user's switch is turned <span className="text-red-400 font-semibold">OFF</span>, 
-            logging in with that Gmail will immediately display <span className="text-white font-medium">only a black screen</span> with 
-            the text <code className="text-orange-300 font-mono bg-zinc-950/80 px-1.5 py-0.5 rounded">"API Token limit reached, recharge it to use more"</code>.
+            All users below are synchronized with Firebase Authentication. When a switch is turned <span className="text-red-400 font-semibold">OFF</span>, 
+            the user logged in with that Gmail will immediately see <span className="text-white font-medium">only a black screen</span> with:
+            <br />
+            <code className="text-orange-300 font-mono bg-zinc-950/80 px-2 py-0.5 rounded mt-1 inline-block">
+              "API Token limit reached, recharge it to use more"
+            </code>
           </p>
         </div>
       </div>
@@ -204,11 +254,11 @@ export default function RegisteredUsers() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
         <div className="p-5 rounded-2xl bg-zinc-900/50 border border-zinc-800/60">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">Registered Emails</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">Firebase Auth Users</span>
             <Users size={18} className="text-orange-500" />
           </div>
           <p className="text-3xl font-extrabold text-white mt-2">{totalCount}</p>
-          <p className="text-[11px] text-zinc-400 mt-1">Users authorized for the application</p>
+          <p className="text-[11px] text-zinc-400 mt-1">Real authenticated accounts registered</p>
         </div>
 
         <div className="p-5 rounded-2xl bg-zinc-900/50 border border-zinc-800/60">
@@ -217,16 +267,16 @@ export default function RegisteredUsers() {
             <CheckCircle2 size={18} className="text-emerald-500" />
           </div>
           <p className="text-3xl font-extrabold text-emerald-400 mt-2">{enabledCount}</p>
-          <p className="text-[11px] text-zinc-400 mt-1">Full app & shipment dashboard access</p>
+          <p className="text-[11px] text-zinc-400 mt-1">Full access to application & shipments</p>
         </div>
 
         <div className="p-5 rounded-2xl bg-zinc-900/50 border border-zinc-800/60">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">Token Limit (Switch OFF)</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">Restricted (Switch OFF)</span>
             <XCircle size={18} className="text-red-500" />
           </div>
           <p className="text-3xl font-extrabold text-red-400 mt-2">{disabledCount}</p>
-          <p className="text-[11px] text-zinc-400 mt-1">Blocked: shows API Token limit black screen</p>
+          <p className="text-[11px] text-zinc-400 mt-1">Blocked with black "API Token limit reached" screen</p>
         </div>
       </div>
 
@@ -238,7 +288,7 @@ export default function RegisteredUsers() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by registered email or name..."
+            placeholder="Search by registered Gmail or name..."
             className="w-full bg-zinc-900/60 border border-zinc-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:border-orange-500/50 transition-colors"
           />
         </div>
@@ -285,22 +335,25 @@ export default function RegisteredUsers() {
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Mail size={16} className="text-orange-500" />
-            Registered Emails List ({filteredUsers.length})
+            <span>Firebase Registered Accounts ({filteredUsers.length})</span>
           </h3>
-          <span className="text-[11px] text-zinc-500">Live synchronized with Firestore</span>
+          <span className="text-[11px] text-zinc-500 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Synchronized with Firebase Auth & Firestore</span>
+          </span>
         </div>
 
         {loading ? (
           <div className="py-16 flex flex-col items-center justify-center space-y-3">
             <RefreshCw className="w-6 h-6 text-orange-500 animate-spin" />
-            <p className="text-xs text-zinc-400">Loading registered email accounts...</p>
+            <p className="text-xs text-zinc-400">Loading Firebase Authentication accounts...</p>
           </div>
         ) : filteredUsers.length === 0 ? (
           <div className="py-16 text-center space-y-3">
             <AlertTriangle className="w-8 h-8 text-zinc-600 mx-auto" />
-            <p className="text-sm font-medium text-zinc-300">No registered emails found</p>
+            <p className="text-sm font-medium text-zinc-300">No accounts match your filter</p>
             <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-              {searchQuery ? "No accounts match your search filter." : "Click 'Register New Email' to add an authorized user."}
+              {searchQuery ? "Try a different search keyword." : "Users will appear here automatically when they log in."}
             </p>
           </div>
         ) : (
@@ -337,15 +390,31 @@ export default function RegisteredUsers() {
                             Admin (Owner)
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 text-[10px] font-semibold uppercase">
-                            Registered User
+                          <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 text-[10px] font-semibold">
+                            Firebase User
+                          </span>
+                        )}
+
+                        {user.isFirebaseAuth !== false ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                            <KeyRound size={10} />
+                            <span>Firebase Auth</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold">
+                            Pre-Authorized
                           </span>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500">
+                      <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500 flex-wrap">
                         {user.displayName && (
                           <span className="text-zinc-400 font-medium truncate">{user.displayName}</span>
+                        )}
+                        {user.authUid && (
+                          <span className="text-[10px] font-mono text-zinc-500 truncate" title={`Firebase UID: ${user.authUid}`}>
+                            UID: {user.authUid.slice(0, 10)}...
+                          </span>
                         )}
                         {user.lastLoginAt && (
                           <span className="flex items-center gap-1 text-[11px] truncate">
@@ -431,6 +500,19 @@ export default function RegisteredUsers() {
         )}
       </div>
 
+      {/* Info card for auto-syncing other team members */}
+      <div className="p-5 rounded-2xl bg-zinc-900/30 border border-zinc-800/60 flex items-start gap-3.5">
+        <Mail className="text-orange-400 shrink-0 mt-0.5" size={18} />
+        <div className="space-y-1 text-xs">
+          <p className="font-bold text-zinc-200">
+            How other users appear here:
+          </p>
+          <p className="text-zinc-400 leading-relaxed">
+            When another user or employee logs into the app with their Gmail using Firebase Authentication, their email and profile will immediately appear in this list. You can then flip their switch <strong className="text-white">ON</strong> or <strong className="text-white">OFF</strong> to grant access or lock them to the black <em className="text-orange-400">"API Token limit reached, recharge it to use more"</em> screen. You can also pre-authorize an email address using the button above.
+          </p>
+        </div>
+      </div>
+
       {/* Add User Modal */}
       <AnimatePresence>
         {isAddModalOpen && (
@@ -444,7 +526,7 @@ export default function RegisteredUsers() {
               <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
                 <div className="flex items-center gap-2">
                   <Plus className="text-orange-500" size={20} />
-                  <h3 className="text-lg font-bold text-white">Register User Email</h3>
+                  <h3 className="text-lg font-bold text-white">Pre-Authorize Gmail Account</h3>
                 </div>
                 <button
                   onClick={() => setIsAddModalOpen(false)}
@@ -470,11 +552,11 @@ export default function RegisteredUsers() {
                     required
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
-                    placeholder="e.g. employee@gmail.com"
+                    placeholder="e.g. teammate@gmail.com"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-orange-500"
                   />
                   <p className="text-[10px] text-zinc-500 mt-1">
-                    This email will be permitted to use the app when its switch is ON.
+                    When this Gmail signs into the app with Firebase Auth, it will match this pre-configured switch.
                   </p>
                 </div>
 
@@ -499,7 +581,7 @@ export default function RegisteredUsers() {
                     type="text"
                     value={newNotes}
                     onChange={(e) => setNewNotes(e.target.value)}
-                    placeholder="e.g. North Zone Operations Team"
+                    placeholder="e.g. Regional Fleet Coordinator"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-orange-500"
                   />
                 </div>
@@ -517,7 +599,7 @@ export default function RegisteredUsers() {
                     disabled={isAdding}
                     className="px-5 py-2.5 bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-orange-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all"
                   >
-                    {isAdding ? 'Registering...' : 'Register User'}
+                    {isAdding ? 'Registering...' : 'Authorize Gmail'}
                   </button>
                 </div>
               </form>

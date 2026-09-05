@@ -44,5 +44,8 @@ export interface RegisteredUser {
   lastLoginAt?: string;
   updatedAt?: string;
   notes?: string;
+  authUid?: string;
+  authProvider?: string;
+  isFirebaseAuth?: boolean;
 }
 

@@ -20,86 +20,78 @@ export function normalizeEmailDocId(email: string): string {
 }
 
 /**
- * Ensures initial registered users exist so the admin sees a comprehensive list
- * immediately upon logging in.
+ * List of known demo emails that should never be present in the database.
+ */
+export const KNOWN_DEMO_EMAILS = [
+  'operations@indiandelivery.com',
+  'dispatcher@indiandelivery.com',
+  'logistics.team@gmail.com',
+];
+
+/**
+ * Deletes any demo / seeded users from Firestore so only real Firebase Authentication users remain.
+ */
+export async function purgeDemoUsers(): Promise<number> {
+  let count = 0;
+  for (const demoEmail of KNOWN_DEMO_EMAILS) {
+    try {
+      const docId = normalizeEmailDocId(demoEmail);
+      const docRef = doc(db, COLLECTION_NAME, docId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        await deleteDoc(docRef);
+        count++;
+      }
+    } catch (err) {
+      console.warn(`Could not purge demo user ${demoEmail}:`, err);
+    }
+  }
+  return count;
+}
+
+/**
+ * Ensures the logged-in admin user is registered and purges any demo emails.
+ * Never creates demo or mock users.
  */
 export async function ensureInitialRegisteredUsers(currentAdmin?: User | null) {
   try {
-    // 1. Ensure admin document exists
-    const adminEmail = ADMIN_EMAIL.toLowerCase();
-    const adminDocRef = doc(db, COLLECTION_NAME, normalizeEmailDocId(adminEmail));
-    const adminDoc = await getDoc(adminDocRef);
+    // 1. Purge any demo emails that might have previously been seeded
+    await purgeDemoUsers();
 
-    if (!adminDoc.exists()) {
-      const adminData: RegisteredUser = {
-        id: adminEmail,
-        email: adminEmail,
-        displayName: currentAdmin?.displayName || 'Uzair Ahmed',
-        photoURL: currentAdmin?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=Uzair`,
-        role: 'admin',
-        isEnabled: true,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-        notes: 'Primary Master Admin with full access & token control',
-      };
-      await setDoc(adminDocRef, adminData);
-    }
+    // 2. Ensure admin document exists from real Firebase Auth
+    if (currentAdmin && currentAdmin.email) {
+      await syncUserOnLogin(currentAdmin);
+    } else {
+      const adminEmail = ADMIN_EMAIL.toLowerCase();
+      const adminDocRef = doc(db, COLLECTION_NAME, normalizeEmailDocId(adminEmail));
+      const adminDoc = await getDoc(adminDocRef);
 
-    // 2. Check if there are other registered users; if none, seed default team accounts
-    const snap = await getDocs(collection(db, COLLECTION_NAME));
-    const otherDocs = snap.docs.filter(d => d.id !== adminEmail);
-
-    if (otherDocs.length === 0) {
-      const sampleUsers: RegisteredUser[] = [
-        {
-          id: 'operations@indiandelivery.com',
-          email: 'operations@indiandelivery.com',
-          displayName: 'Rahul Verma (Fleet Ops)',
-          photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Rahul',
-          role: 'user',
+      if (!adminDoc.exists()) {
+        const adminData: RegisteredUser = {
+          id: adminEmail,
+          email: adminEmail,
+          displayName: 'Sayed Uzair',
+          photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=Uzair`,
+          role: 'admin',
           isEnabled: true,
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-          lastLoginAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-          notes: 'Delhi Hub Logistics Operator',
-        },
-        {
-          id: 'dispatcher@indiandelivery.com',
-          email: 'dispatcher@indiandelivery.com',
-          displayName: 'Priya Sharma (Dispatch)',
-          photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Priya',
-          role: 'user',
-          isEnabled: true,
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 96).toISOString(),
-          lastLoginAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
-          notes: 'Mumbai Regional Logistics Lead',
-        },
-        {
-          id: 'logistics.team@gmail.com',
-          email: 'logistics.team@gmail.com',
-          displayName: 'Team Transit Terminal',
-          photoURL: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Terminal',
-          role: 'user',
-          isEnabled: false,
-          createdAt: new Date(Date.now() - 1000 * 60 * 60 * 200).toISOString(),
-          lastLoginAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-          notes: 'External Partner Account (Sample Token Limit)',
-        },
-      ];
-
-      for (const sample of sampleUsers) {
-        await setDoc(doc(db, COLLECTION_NAME, sample.id), sample);
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+          notes: 'Master Administrator (Firebase Auth)',
+          isFirebaseAuth: true,
+        };
+        await setDoc(adminDocRef, adminData);
       }
     }
   } catch (err) {
-    console.error('Error ensuring initial registered users:', err);
+    console.error('Error ensuring admin user:', err);
   }
 }
 
 /**
- * Synchronizes user data when someone signs in with Google.
+ * Synchronizes real user data whenever someone signs in with Firebase Authentication.
  */
 export async function syncUserOnLogin(user: User): Promise<RegisteredUser> {
-  if (!user.email) throw new Error('User has no email address');
+  if (!user.email) throw new Error('User has no email address in Firebase Authentication');
   
   const email = user.email.toLowerCase().trim();
   const docId = normalizeEmailDocId(email);
@@ -108,6 +100,7 @@ export async function syncUserOnLogin(user: User): Promise<RegisteredUser> {
   try {
     const existing = await getDoc(docRef);
     const isAdmin = email === ADMIN_EMAIL.toLowerCase();
+    const providerId = user.providerData?.[0]?.providerId || 'firebase';
 
     if (!existing.exists()) {
       const newUser: RegisteredUser = {
@@ -116,10 +109,13 @@ export async function syncUserOnLogin(user: User): Promise<RegisteredUser> {
         displayName: user.displayName || email.split('@')[0],
         photoURL: user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
         role: isAdmin ? 'admin' : 'user',
-        isEnabled: true, // By default enabled until admin turns switch off
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-        notes: isAdmin ? 'Primary Master Admin' : 'Registered Google User',
+        isEnabled: true, // Enabled by default until admin turns off switch
+        createdAt: user.metadata?.creationTime || new Date().toISOString(),
+        lastLoginAt: user.metadata?.lastSignInTime || new Date().toISOString(),
+        notes: isAdmin ? 'Master Administrator (Firebase Auth)' : 'Authenticated Firebase User',
+        authUid: user.uid,
+        authProvider: providerId,
+        isFirebaseAuth: true,
       };
       await setDoc(docRef, newUser);
       return newUser;
@@ -127,10 +123,13 @@ export async function syncUserOnLogin(user: User): Promise<RegisteredUser> {
       const existingData = existing.data() as RegisteredUser;
       const updatedData: Partial<RegisteredUser> = {
         displayName: user.displayName || existingData.displayName || email.split('@')[0],
-        photoURL: user.photoURL || existingData.photoURL || '',
-        lastLoginAt: new Date().toISOString(),
+        photoURL: user.photoURL || existingData.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
+        lastLoginAt: user.metadata?.lastSignInTime || new Date().toISOString(),
+        authUid: user.uid,
+        authProvider: providerId,
+        isFirebaseAuth: true,
       };
-      if (isAdmin && existingData.role !== 'admin') {
+      if (isAdmin) {
         updatedData.role = 'admin';
         updatedData.isEnabled = true;
       }
@@ -163,7 +162,7 @@ export async function toggleUserAccess(email: string, isEnabled: boolean): Promi
 }
 
 /**
- * Register a new email manually by the admin.
+ * Register an authorized email manually by the admin.
  */
 export async function addRegisteredUser(
   email: string, 
@@ -182,8 +181,9 @@ export async function addRegisteredUser(
     role: cleanEmail === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
     isEnabled: true,
     createdAt: new Date().toISOString(),
-    lastLoginAt: 'Never',
+    lastLoginAt: 'Pending First Sign-In',
     notes: notes?.trim() || 'Authorized by Admin uzair9799@gmail.com',
+    isFirebaseAuth: false, // will flip to true when they log in with Firebase Auth
   };
 
   try {
@@ -210,6 +210,7 @@ export async function removeRegisteredUser(email: string): Promise<void> {
 
 /**
  * Real-time listener for all registered users (for admin uzair9799@gmail.com).
+ * Filters out any known demo emails in memory as well for guaranteed cleanliness.
  */
 export function subscribeToRegisteredUsers(
   onUsersChange: (users: RegisteredUser[]) => void,
@@ -218,10 +219,12 @@ export function subscribeToRegisteredUsers(
   return onSnapshot(
     collection(db, COLLECTION_NAME),
     (snapshot) => {
-      const users: RegisteredUser[] = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<RegisteredUser, 'id'>),
-      }));
+      const users: RegisteredUser[] = snapshot.docs
+        .map((docSnap) => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Omit<RegisteredUser, 'id'>),
+        }))
+        .filter((u) => !KNOWN_DEMO_EMAILS.includes(u.email.toLowerCase()));
       onUsersChange(users);
     },
     (err) => {
