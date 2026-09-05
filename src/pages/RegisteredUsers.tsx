@@ -14,7 +14,10 @@ import {
   Clock,
   Sparkles,
   KeyRound,
-  Check
+  Check,
+  DownloadCloud,
+  FileText,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RegisteredUser } from '../types';
@@ -24,7 +27,9 @@ import {
   addRegisteredUser, 
   removeRegisteredUser, 
   ensureInitialRegisteredUsers,
-  purgeDemoUsers
+  purgeDemoUsers,
+  discoverAndSyncPreviousUsers,
+  batchImportUsers
 } from '../lib/userService';
 import { ADMIN_EMAIL } from '../constants';
 import { cn } from '../lib/utils';
@@ -38,15 +43,22 @@ export default function RegisteredUsers() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
-  const [purgeMessage, setPurgeMessage] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
   
-  // Modal states
+  // Single Add Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
   const [newNotes, setNewNotes] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+
+  // Batch Import Modal state
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchEmailsText, setBatchEmailsText] = useState('');
+  const [isBatchImporting, setIsBatchImporting] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
 
   // Preview state for admin to inspect black screen
   const [isPreviewingLimitScreen, setIsPreviewingLimitScreen] = useState(false);
@@ -55,7 +67,10 @@ export default function RegisteredUsers() {
     // 1. Purge any demo emails and ensure admin account exists
     ensureInitialRegisteredUsers(auth.currentUser);
 
-    // 2. Real-time subscription to authenticated users
+    // 2. Discover previous users from alternate collections and shipment history
+    discoverAndSyncPreviousUsers().catch(err => console.warn('Auto-discovery note:', err));
+
+    // 3. Real-time subscription to authenticated users
     const unsubscribe = subscribeToRegisteredUsers(
       (data) => {
         setUsers(data);
@@ -72,18 +87,37 @@ export default function RegisteredUsers() {
 
   const handlePurge = async () => {
     setPurging(true);
-    setPurgeMessage(null);
     try {
       const removed = await purgeDemoUsers();
-      setPurgeMessage(removed > 0 
-        ? `Cleaned up ${removed} demo email(s). Now only showing Firebase Authentication users.`
-        : 'All demo emails already cleaned up. List contains only real Firebase Auth accounts.'
-      );
-      setTimeout(() => setPurgeMessage(null), 5000);
+      setStatusMessage({
+        type: 'success',
+        text: removed > 0 
+          ? `Purged ${removed} demo email(s). Now showing only real Firebase users.`
+          : 'All demo emails have been purged from the database.'
+      });
+      setTimeout(() => setStatusMessage(null), 5000);
     } catch (err) {
       console.error('Failed to purge demo users:', err);
     } finally {
       setPurging(false);
+    }
+  };
+
+  const handleSyncDiscovery = async () => {
+    setSyncing(true);
+    try {
+      const res = await discoverAndSyncPreviousUsers();
+      setStatusMessage({
+        type: 'success',
+        text: res.discovered > 0
+          ? `Discovered and imported ${res.discovered} previously registered user(s) from Firebase collections!`
+          : `Scanned ${res.totalScanned} Firebase records. All previous records are already synchronized.`
+      });
+      setTimeout(() => setStatusMessage(null), 6000);
+    } catch (err) {
+      console.error('Discovery error:', err);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -115,10 +149,46 @@ export default function RegisteredUsers() {
       setNewName('');
       setNewNotes('');
       setIsAddModalOpen(false);
+      setStatusMessage({
+        type: 'success',
+        text: `Authorized ${newEmail}. They will match this ON/OFF toggle when signing in.`
+      });
+      setTimeout(() => setStatusMessage(null), 5000);
     } catch (err: any) {
       setAddError(err.message || 'Failed to add user email.');
     } finally {
       setIsAdding(false);
+    }
+  };
+
+  const handleBatchImport = async (e: FormEvent) => {
+    e.preventDefault();
+    setBatchError(null);
+
+    const rawList = batchEmailsText
+      .split(/[\n,;]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    if (rawList.length === 0) {
+      setBatchError('Please enter at least one valid email address.');
+      return;
+    }
+
+    setIsBatchImporting(true);
+    try {
+      const res = await batchImportUsers(rawList);
+      setIsBatchModalOpen(false);
+      setBatchEmailsText('');
+      setStatusMessage({
+        type: 'success',
+        text: `Batch imported ${res.imported} Firebase user(s). (${res.skipped} skipped/duplicate).`
+      });
+      setTimeout(() => setStatusMessage(null), 6000);
+    } catch (err: any) {
+      setBatchError(err.message || 'Failed to import users.');
+    } finally {
+      setIsBatchImporting(false);
     }
   };
 
@@ -192,43 +262,67 @@ export default function RegisteredUsers() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button 
+            onClick={handleSyncDiscovery}
+            disabled={syncing}
+            title="Scan Firestore collections and previous shipments for existing users"
+            className="px-3 py-2 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-1.5"
+          >
+            <Database size={14} className={cn("text-orange-400", syncing && "animate-spin")} />
+            <span>{syncing ? "Scanning..." : "Scan Previous Users"}</span>
+          </button>
+
+          <button 
+            onClick={() => setIsBatchModalOpen(true)}
+            title="Batch import user emails from Firebase Authentication console"
+            className="px-3 py-2 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-1.5"
+          >
+            <DownloadCloud size={14} className="text-blue-400" />
+            <span>Import Auth List</span>
+          </button>
+
           <button 
             onClick={handlePurge}
             disabled={purging}
             title="Clean any legacy demo accounts from the database"
-            className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-2"
+            className="px-3 py-2 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-1.5"
           >
-            <RefreshCw size={14} className={cn("text-zinc-400", purging && "animate-spin text-orange-400")} />
-            <span>{purging ? "Purging..." : "Purge Demo Accounts"}</span>
+            <RefreshCw size={13} className={cn("text-zinc-400", purging && "animate-spin text-orange-400")} />
+            <span>{purging ? "Purging..." : "Purge Demo"}</span>
           </button>
 
           <button 
             onClick={() => setIsPreviewingLimitScreen(true)}
-            className="px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-2"
+            className="px-3 py-2 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold hover:bg-zinc-800 transition-all flex items-center gap-1.5"
           >
             <Eye size={14} className="text-orange-400" />
-            <span>Preview Limit Screen</span>
+            <span>Preview Limit</span>
           </button>
 
           <button 
             onClick={() => setIsAddModalOpen(true)}
-            className="px-4 py-2.5 bg-orange-500 hover:bg-orange-400 text-orange-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg shadow-orange-500/20"
+            className="px-3.5 py-2 bg-orange-500 hover:bg-orange-400 text-orange-950 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-lg shadow-orange-500/20"
           >
-            <Plus size={16} />
+            <Plus size={15} />
             <span>Pre-Authorize Gmail</span>
           </button>
         </div>
       </header>
 
-      {purgeMessage && (
+      {statusMessage && (
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium flex items-center gap-2"
+          className={cn(
+            "p-3.5 rounded-xl border text-xs font-medium flex items-center gap-2",
+            statusMessage.type === 'success' 
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+              : "bg-blue-500/10 border-blue-500/30 text-blue-400"
+          )}
         >
           <Check size={16} />
-          <span>{purgeMessage}</span>
+          <span>{statusMessage.text}</span>
         </motion.div>
       )}
 
@@ -419,7 +513,7 @@ export default function RegisteredUsers() {
                         {user.lastLoginAt && (
                           <span className="flex items-center gap-1 text-[11px] truncate">
                             <Clock size={12} className="text-zinc-600" />
-                            Active: {new Date(user.lastLoginAt).toLocaleDateString()}
+                            Active: {user.lastLoginAt.includes('T') ? new Date(user.lastLoginAt).toLocaleDateString() : user.lastLoginAt}
                           </span>
                         )}
                       </div>
@@ -505,15 +599,19 @@ export default function RegisteredUsers() {
         <Mail className="text-orange-400 shrink-0 mt-0.5" size={18} />
         <div className="space-y-1 text-xs">
           <p className="font-bold text-zinc-200">
-            How other users appear here:
+            How users synchronize:
           </p>
           <p className="text-zinc-400 leading-relaxed">
-            When another user or employee logs into the app with their Gmail using Firebase Authentication, their email and profile will immediately appear in this list. You can then flip their switch <strong className="text-white">ON</strong> or <strong className="text-white">OFF</strong> to grant access or lock them to the black <em className="text-orange-400">"API Token limit reached, recharge it to use more"</em> screen. You can also pre-authorize an email address using the button above.
+            1. <strong>Automatic Sign-in Sync:</strong> Whenever any user logs in with their Gmail via Firebase Authentication, their account immediately appears above with their UID and profile.
+            <br />
+            2. <strong>Previous User Discovery:</strong> Click <em>"Scan Previous Users"</em> to scan existing Firebase collections and past shipment history.
+            <br />
+            3. <strong>Batch Import:</strong> Click <em>"Import Auth List"</em> to paste any list of emails directly from your Firebase Authentication console.
           </p>
         </div>
       </div>
 
-      {/* Add User Modal */}
+      {/* Single Add User Modal */}
       <AnimatePresence>
         {isAddModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
@@ -600,6 +698,78 @@ export default function RegisteredUsers() {
                     className="px-5 py-2.5 bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-orange-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all"
                   >
                     {isAdding ? 'Registering...' : 'Authorize Gmail'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Batch Import Modal */}
+      <AnimatePresence>
+        {isBatchModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-lg p-6 shadow-2xl space-y-5"
+            >
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+                <div className="flex items-center gap-2">
+                  <DownloadCloud className="text-blue-400" size={22} />
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Import from Firebase Auth Console</h3>
+                    <p className="text-xs text-zinc-400">Batch add your existing Firebase users</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsBatchModalOpen(false)}
+                  className="text-zinc-500 hover:text-white transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleBatchImport} className="space-y-4">
+                {batchError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
+                    {batchError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+                    Paste Firebase User Emails (newline or comma separated)
+                  </label>
+                  <textarea
+                    rows={6}
+                    required
+                    value={batchEmailsText}
+                    onChange={(e) => setBatchEmailsText(e.target.value)}
+                    placeholder={`user1@gmail.com\nuser2@gmail.com\noperations.manager@gmail.com`}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3.5 text-xs font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-blue-500"
+                  />
+                  <p className="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">
+                    Tip: You can copy the email column from the Firebase Console (Authentication &gt; Users) and paste it directly here.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
+                  <button
+                    type="button"
+                    onClick={() => setIsBatchModalOpen(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isBatchImporting}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg shadow-blue-500/20"
+                  >
+                    {isBatchImporting ? 'Importing...' : 'Import All to Control List'}
                   </button>
                 </div>
               </form>

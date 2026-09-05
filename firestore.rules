@@ -41,6 +41,21 @@ service cloud.firestore {
       allow delete: if isAppAdmin();
     }
 
+    // Users Collection (Allow admin to access any previous/legacy registered user profiles)
+    match /users/{userDoc} {
+      allow read, write: if isAppAdmin();
+      allow get: if isSignedIn() && (
+        request.auth.uid == userDoc || 
+        request.auth.token.email == userDoc ||
+        request.auth.token.email == resource.data.email
+      );
+      allow create, update: if isSignedIn() && (
+        isAppAdmin() || 
+        request.auth.uid == userDoc ||
+        request.auth.token.email == request.resource.data.email
+      );
+    }
+
     // Shipments Collection
     match /shipments/{shipmentId} {
       // Anyone can look up a specific shipment if they have the ID (Tracking)

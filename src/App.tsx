@@ -13,6 +13,7 @@ import { ADMIN_EMAIL } from './constants';
 import { syncUserOnLogin, subscribeToUserStatus, ensureInitialRegisteredUsers } from './lib/userService';
 import TokenLimitBlockedScreen from './components/TokenLimitBlockedScreen';
 import { cn } from './lib/utils';
+import { isSecretGatewayPath, getSecretGatewayToken } from './lib/secretGateway';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Shipments = lazy(() => import('./pages/Shipments'));
@@ -28,7 +29,8 @@ export default function App() {
     const path = window.location.pathname.replace(/^\//, '').toLowerCase();
     const hash = window.location.hash.replace(/^#/, '').toLowerCase();
     const route = path || hash;
-    if (route === 'login') return 'login';
+    if (isSecretGatewayPath(route)) return 'secret-gateway';
+    if (route === 'login') return 'public-search';
     if (route === 'dashboard') return 'dashboard';
     if (route === 'users-access' || route === 'users') return 'users-access';
     if (route === 'shipments') return 'shipments';
@@ -46,8 +48,14 @@ export default function App() {
       const hash = window.location.hash.replace(/^#/, '').toLowerCase();
       const route = path || hash;
       
-      if (route === 'login') setActiveTab('login');
-      else if (route === 'dashboard') setActiveTab('dashboard');
+      if (isSecretGatewayPath(route)) {
+        setActiveTab('secret-gateway');
+      } else if (route === 'login') {
+        setActiveTab('public-search');
+        if (window.location.pathname !== '/') {
+          window.history.replaceState(null, '', '/');
+        }
+      } else if (route === 'dashboard') setActiveTab('dashboard');
       else if (route === 'users-access' || route === 'users') setActiveTab('users-access');
       else if (route === 'shipments') setActiveTab('shipments');
       else if (route === 'tracking') setActiveTab('tracking');
@@ -72,7 +80,12 @@ export default function App() {
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
-    const targetPath = tab === 'public-search' ? '/' : `/${tab}`;
+    let targetPath = '/';
+    if (tab === 'secret-gateway') {
+      targetPath = `/${getSecretGatewayToken()}`;
+    } else if (tab !== 'public-search') {
+      targetPath = `/${tab}`;
+    }
     if (window.location.pathname !== targetPath) {
       window.history.pushState(null, '', targetPath);
     }
@@ -109,9 +122,9 @@ export default function App() {
         }
 
         // If admin logs in, navigate directly to User Access & Tokens view to see registered emails
-        if (isAdmin && (activeTab === 'login' || activeTab === 'public-search')) {
+        if (isAdmin && (activeTab === 'secret-gateway' || activeTab === 'public-search')) {
           handleTabChange('users-access');
-        } else if (activeTab === 'login') {
+        } else if (activeTab === 'secret-gateway') {
           handleTabChange('dashboard');
         }
 
@@ -147,7 +160,7 @@ export default function App() {
       case 'add-shipment': return <AdminAddShipment />;
       case 'public-search': return <PublicTracking />;
       case 'settings': return <Settings onNavigateTab={handleTabChange} />;
-      case 'login': return <Login onLoginSuccess={() => {
+      case 'secret-gateway': return <Login onLoginSuccess={() => {
         if (auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
           handleTabChange('users-access');
         } else {
@@ -165,7 +178,7 @@ export default function App() {
       <Sidebar activeTab={activeTab} setActiveTab={handleTabChange} />
       
       <main className="lg:pl-64 min-h-screen flex flex-col">
-        {activeTab !== 'login' && (
+        {activeTab !== 'secret-gateway' && (
           <header className="sticky top-0 z-30 h-16 bg-[#09090b]/80 backdrop-blur-md border-b border-zinc-800/50 px-6 lg:px-10 flex items-center justify-between">
              <div className="flex-1 max-w-xl hidden md:block">
                 <div className="relative group">

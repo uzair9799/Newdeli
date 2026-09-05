@@ -88,6 +88,142 @@ export async function ensureInitialRegisteredUsers(currentAdmin?: User | null) {
 }
 
 /**
+ * Scans Firebase Firestore to discover any existing/previous users from:
+ * 1. The alternate 'users' collection
+ * 2. The 'shipments' collection (createdByEmail and updatedByEmail metadata)
+ * 
+ * Any discovered real user emails are added to 'registered_users' with access enabled.
+ */
+export async function discoverAndSyncPreviousUsers(): Promise<{ discovered: number; totalScanned: number }> {
+  let discovered = 0;
+  let totalScanned = 0;
+  const discoveredEmails = new Map<string, Partial<RegisteredUser>>();
+
+  // 1. Scan alternate 'users' collection
+  try {
+    const usersSnap = await getDocs(collection(db, 'users'));
+    totalScanned += usersSnap.size;
+    usersSnap.docs.forEach((d) => {
+      const data = d.data();
+      const email = (data.email || (d.id.includes('@') ? d.id : null))?.toLowerCase()?.trim();
+      if (email && email.includes('@') && !KNOWN_DEMO_EMAILS.includes(email)) {
+        discoveredEmails.set(email, {
+          email,
+          displayName: data.displayName || data.name || email.split('@')[0],
+          photoURL: data.photoURL || data.avatar,
+          notes: 'Discovered from Firebase users collection',
+          isFirebaseAuth: true,
+          authUid: data.uid || d.id,
+        });
+      }
+    });
+  } catch (err) {
+    console.warn('Could not scan alternate users collection:', err);
+  }
+
+  // 2. Scan 'shipments' collection for real creator/updater emails
+  try {
+    const shipmentsSnap = await getDocs(collection(db, 'shipments'));
+    totalScanned += shipmentsSnap.size;
+    shipmentsSnap.docs.forEach((d) => {
+      const data = d.data();
+      const candidates = [data.createdByEmail, data.updatedByEmail, data.assignedToEmail];
+      for (const raw of candidates) {
+        if (raw && typeof raw === 'string' && raw.includes('@')) {
+          const email = raw.toLowerCase().trim();
+          if (!KNOWN_DEMO_EMAILS.includes(email) && !discoveredEmails.has(email)) {
+            discoveredEmails.set(email, {
+              email,
+              displayName: email.split('@')[0],
+              notes: 'Discovered from Firebase shipment audit trail',
+              isFirebaseAuth: true,
+            });
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.warn('Could not scan shipments collection:', err);
+  }
+
+  // 3. Persist all discovered accounts to 'registered_users'
+  for (const [email, userDetails] of discoveredEmails.entries()) {
+    const docId = normalizeEmailDocId(email);
+    const docRef = doc(db, COLLECTION_NAME, docId);
+    try {
+      const existing = await getDoc(docRef);
+      if (!existing.exists()) {
+        const newUser: RegisteredUser = {
+          id: email,
+          email,
+          displayName: userDetails.displayName || email.split('@')[0],
+          photoURL: userDetails.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
+          role: email === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
+          isEnabled: true,
+          createdAt: new Date().toISOString(),
+          lastLoginAt: 'Previously Active',
+          notes: userDetails.notes || 'Imported from Firebase history',
+          isFirebaseAuth: true,
+          authUid: userDetails.authUid,
+        };
+        await setDoc(docRef, newUser);
+        discovered++;
+      }
+    } catch (err) {
+      console.warn(`Failed to sync discovered user ${email}:`, err);
+    }
+  }
+
+  return { discovered, totalScanned };
+}
+
+/**
+ * Batch imports user emails (e.g. copied from Firebase Authentication console).
+ */
+export async function batchImportUsers(rawEmails: string[]): Promise<{ imported: number; skipped: number }> {
+  let imported = 0;
+  let skipped = 0;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  for (const raw of rawEmails) {
+    const email = raw.trim().toLowerCase();
+    if (!email || !emailRegex.test(email) || KNOWN_DEMO_EMAILS.includes(email)) {
+      skipped++;
+      continue;
+    }
+
+    const docId = normalizeEmailDocId(email);
+    const docRef = doc(db, COLLECTION_NAME, docId);
+    try {
+      const existing = await getDoc(docRef);
+      if (!existing.exists()) {
+        const newUser: RegisteredUser = {
+          id: email,
+          email,
+          displayName: email.split('@')[0],
+          photoURL: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
+          role: email === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
+          isEnabled: true,
+          createdAt: new Date().toISOString(),
+          lastLoginAt: 'Imported from Firebase Auth',
+          notes: 'Synchronized from Firebase Authentication console',
+          isFirebaseAuth: true,
+        };
+        await setDoc(docRef, newUser);
+        imported++;
+      } else {
+        skipped++;
+      }
+    } catch (err) {
+      console.warn(`Error importing user ${email}:`, err);
+      skipped++;
+    }
+  }
+
+  return { imported, skipped };
+}
+
+/**
  * Synchronizes real user data whenever someone signs in with Firebase Authentication.
  */
 export async function syncUserOnLogin(user: User): Promise<RegisteredUser> {
@@ -181,9 +317,9 @@ export async function addRegisteredUser(
     role: cleanEmail === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user',
     isEnabled: true,
     createdAt: new Date().toISOString(),
-    lastLoginAt: 'Pending First Sign-In',
+    lastLoginAt: 'Pre-Authorized',
     notes: notes?.trim() || 'Authorized by Admin uzair9799@gmail.com',
-    isFirebaseAuth: false, // will flip to true when they log in with Firebase Auth
+    isFirebaseAuth: true,
   };
 
   try {
